@@ -20,6 +20,7 @@ from typing import Protocol
 
 import httpx
 
+from .. import voicestudio as vs
 from ..audio import MIC_RATE, duration_ms, to_wav
 from ..config import settings
 
@@ -141,10 +142,12 @@ class WhisperSession:
             self._last_at = now
             snap = bytes(self.buf)
             self._last_interim_audio = len(snap)
-            self._inflight = self._loop.run_in_executor(
-                _whisper_exec, _whisper_transcribe, self.model, snap, self.language, self.prompt
-            )
+            self._inflight = self._submit(snap)
             self._inflight.add_done_callback(lambda f: self._loop.create_task(self._on_interim_done(f)))
+
+    def _submit(self, snap: bytes) -> asyncio.Future:
+        """Start decoding `snap` (16 kHz PCM16) and return a future of its text. Subclasses swap the engine."""
+        return self._loop.run_in_executor(_whisper_exec, _whisper_transcribe, self.model, snap, self.language, self.prompt)
 
     async def _on_interim_done(self, fut: asyncio.Future) -> None:
         self._inflight = None
@@ -161,9 +164,7 @@ class WhisperSession:
         if self._pending is not None and self._pending[0] == n:
             return await asyncio.shield(self._pending[1])
         snap = bytes(self.buf)
-        fut = self._loop.run_in_executor(
-            _whisper_exec, _whisper_transcribe, self.model, snap, self.language, self.prompt
-        )
+        fut = self._submit(snap)
         self._pending = (n, fut)
         try:
             return await asyncio.shield(fut)
@@ -206,6 +207,52 @@ class WhisperSession:
 
     async def cancel(self) -> None:
         self._cancelled = True
+
+
+# --------------------------------------------------------------------------- #
+# VoiceStudio ASR – whatever engine the local VoiceStudio has active (mlx-whisper, whisper.cpp, sherpa…)
+#   Same strategy as the local Whisper session: decode the utterance-so-far every ~0.7 s for interim text, and
+#   decode once more at the first pause (the "speculative final") so the semantic turn detector sees fresh
+#   words *exactly when VAD reports silence*. VoiceStudio's own streaming endpoint only emits partials every 2 s
+#   and times out after 3 s without audio – too coarse for that, so we use its OpenAI-compatible HTTP endpoint.
+# --------------------------------------------------------------------------- #
+class _VoiceStudioSession(WhisperSession):
+    def __init__(self, model: str, language: str, on_interim: InterimCb, prompt: str | None) -> None:
+        super().__init__(model, language, on_interim, prompt)
+        self._http = vs._client(60.0)  # one keep-alive connection per turn
+
+    def _submit(self, snap: bytes) -> asyncio.Future:
+        return asyncio.ensure_future(self._decode(snap))
+
+    async def _decode(self, pcm: bytes) -> str:
+        try:
+            return await vs.transcribe_wav(to_wav(pcm, MIC_RATE), model=self.model, language=self.language,
+                                           prompt=self.prompt or "", client=self._http)
+        except Exception as e:
+            raise vs.VoiceStudioError(vs.explain(e)) from e
+
+    async def finish(self) -> STTResult:
+        try:
+            return await super().finish()
+        finally:
+            await self._http.aclose()
+
+    async def cancel(self) -> None:
+        await super().cancel()
+        await self._http.aclose()
+
+
+class VoiceStudioSTT:
+    name = "voicestudio"
+    streaming = True
+
+    def __init__(self, model: str = "", language: str = "en", prompt: str = "") -> None:
+        self.model = model or "whisper-1"  # an OpenAI alias for "the ASR engine active in VoiceStudio"
+        self.language = language
+        self.prompt = prompt or None
+
+    def open(self, on_interim: InterimCb, hint: str | None = None) -> STTSession:
+        return _VoiceStudioSession(self.model, self.language, on_interim, self.prompt)
 
 
 class WhisperLocal:
@@ -394,6 +441,8 @@ class MockSTT:
 def create_stt(provider: str, model: str, language: str, prompt: str = "") -> STTProvider:
     if provider == "whisper-local":
         return WhisperLocal(model, language, prompt)
+    if provider == "voicestudio":
+        return VoiceStudioSTT(model, language, prompt)
     if provider == "openai":
         return OpenAISTT(model, language, prompt)
     if provider == "deepgram":

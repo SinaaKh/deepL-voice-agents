@@ -52,6 +52,21 @@ class Settings:
         return os.getenv("TOGETHER_API_KEY", "")
 
     @property
+    def voicestudio_url(self) -> str:
+        """Where VoiceStudio's local API listens (its backend defaults to loopback :3900)."""
+        return (os.getenv("VOICESTUDIO_URL", "") or "http://127.0.0.1:3900").rstrip("/")
+
+    @property
+    def voicestudio_key(self) -> str:
+        """Bearer key, only needed for a *remote* VoiceStudio (loopback is unauthenticated)."""
+        return os.getenv("VOICESTUDIO_API_KEY", "") or os.getenv("OMNIVOICE_API_KEY", "")
+
+    @property
+    def voicestudio_home(self) -> str:
+        """Where `make studio-install` puts the VoiceStudio checkout (a sibling of this repo by default)."""
+        return os.getenv("VOICESTUDIO_HOME", "") or str(ROOT.parent / "voicestudio")
+
+    @property
     def ollama_url(self) -> str:
         return os.getenv("OLLAMA_URL", "http://localhost:11434")
 
@@ -102,7 +117,7 @@ class InterruptConfig(BaseModel):
 
 
 class STTConfig(BaseModel):
-    provider: Literal["whisper-local", "openai", "deepgram", "mock"] = "whisper-local"
+    provider: Literal["whisper-local", "voicestudio", "openai", "deepgram", "mock"] = "whisper-local"
     model: str = ""  # provider default if empty
     language: str = "en"
     # Vocabulary hint (Whisper `initial_prompt` / OpenAI `prompt`). Empty = use the persona's domain prompt.
@@ -133,10 +148,13 @@ class ChunkingConfig(BaseModel):
 
 
 class TTSConfig(BaseModel):
-    provider: Literal["piper", "macos-say", "openai", "elevenlabs", "mock"] = "piper"
+    provider: Literal["piper", "voicestudio", "macos-say", "openai", "elevenlabs", "mock"] = "piper"
     voice_id: str = ""  # the `voice_id` knob from Lesson 4
     speed: float = Field(1.0, ge=0.5, le=2.0)
-    model: str = ""
+    model: str = ""  # provider model / engine id (VoiceStudio: omnivoice, kittentts, …)
+    # VoiceStudio extras: describe the voice or style in words ("warm, calm, slight British accent") and pin a language
+    instruct: str = ""
+    language: str = ""
     pronunciations: list[Pronunciation] = Field(default_factory=list)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
 

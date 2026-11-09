@@ -16,13 +16,16 @@ import shutil
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, Response, WebSocket
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from . import voicestudio as vs
 from .benchmark import BenchRequest, run_benchmark
+from .audio import MIC_RATE, resample, to_wav
 from .config import ROOT, SessionConfig, settings
 from .interrupt import build_segments, heard_text
 from .llm import ENDPOINTS, ollama_models
@@ -32,7 +35,7 @@ from .realtime import RealtimeSession
 from .scenarios import list_scenarios, run_scenario
 from .session import VoiceSession
 from .stt import whisper_is_warm
-from .tts import ELEVEN_VOICES, piper_voices, say_voices
+from .tts import ELEVEN_VOICES, create_tts, piper_voices, say_voices
 from .turn.sim import DATASET, SimRequest, simulate, sweep
 from .vad import find_silero_model
 
@@ -60,6 +63,9 @@ def health():
 def providers():
     ollama = ollama_models()
     voices = say_voices()
+    vsnap = vs.probe()
+    vs_ok = vsnap["reachable"] and not vsnap["auth_required"]
+    vs_reason = "" if vs_ok else (vsnap["error"] or vs.START_HINT)
     keys = {
         "openai": bool(settings.openai_key), "anthropic": bool(settings.anthropic_key), "elevenlabs": bool(settings.elevenlabs_key),
         "deepgram": bool(settings.deepgram_key), "groq": bool(settings.groq_key), "cerebras": bool(settings.cerebras_key),
@@ -89,6 +95,9 @@ def providers():
         "stt": [
             {"id": "whisper-local", "label": "Whisper (local, faster-whisper)", "available": True, "reason": "", "local": True, "streaming": True,
              "models": ["tiny.en", "base.en", "small.en"], "default": settings.whisper_model, "loaded": whisper_is_warm(settings.whisper_model)},
+            {"id": "voicestudio", "label": "VoiceStudio ASR (local)", "available": vs_ok, "reason": vs_reason, "local": True, "streaming": True,
+             "models": [vsnap["asr_engine"]] if vsnap["asr_engine"] else [], "default": "",
+             "note": f"uses the ASR engine active in VoiceStudio ({vsnap['asr_engine'] or 'unknown'})" if vs_ok else ""},
             {"id": "openai", "label": "OpenAI transcribe", "available": keys["openai"], "reason": "" if keys["openai"] else "set OPENAI_API_KEY in .env",
              "local": False, "streaming": False, "models": ["gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"], "default": "gpt-4o-mini-transcribe"},
             {"id": "deepgram", "label": "Deepgram (streaming)", "available": keys["deepgram"], "reason": "" if keys["deepgram"] else "set DEEPGRAM_API_KEY in .env",
@@ -99,6 +108,9 @@ def providers():
         "tts": [
             {"id": "piper", "label": "Piper (local neural)", "available": bool(piper_voices()), "reason": "" if piper_voices() else "run `python scripts/download_models.py`",
              "local": True, "streaming": True, "voices": piper_voices(), "default": piper_voices()[0]["id"] if piper_voices() else ""},
+            {"id": "voicestudio", "label": "VoiceStudio (local)", "available": vs_ok, "reason": vs_reason, "local": True, "streaming": True,
+             "voices": vs.voice_options(vsnap), "models": vs.tts_engine_ids(vsnap), "default": "",
+             "note": "your cloned / designed voices from VoiceStudio; streams sentence by sentence" if vs_ok else ""},
             {"id": "macos-say", "label": "macOS say (local)", "available": bool(shutil.which("say")), "reason": "" if shutil.which("say") else "macOS only",
              "local": True, "streaming": False, "voices": voices, "default": "Samantha",
              "note": "renders each sentence in a separate process (~1.5 s) – a good example of a non-streaming TTS"},
@@ -112,6 +124,17 @@ def providers():
         "realtime": {"available": keys["openai"], "reason": "" if keys["openai"] else "set OPENAI_API_KEY in .env",
                      "models": ["gpt-realtime", "gpt-realtime-mini"], "voices": ["marin", "cedar", "alloy", "ash", "coral", "echo", "sage", "shimmer", "verse"]},
         "livekit": {"configured": bool(settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret), "url": settings.livekit_url},
+        "voicestudio": _voicestudio_summary(vsnap),
+    }
+
+
+def _voicestudio_summary(snap: dict) -> dict:
+    home = Path(settings.voicestudio_home)
+    return {
+        "reachable": snap["reachable"], "url": snap["url"], "version": snap["version"], "device": snap["device"],
+        "engines_loading": snap["engines_loading"], "auth_required": snap["auth_required"],
+        "asr_engine": snap["asr_engine"], "tts_engines": vs.tts_engine_ids(snap), "voices": len([v for v in snap["voices"] if v.get("type") == "profile"]),
+        "error": snap["error"], "hint": snap["hint"], "installed": (home / "backend").is_dir(), "home": str(home),
     }
 
 
@@ -161,6 +184,102 @@ async def benchmark(req: BenchRequest):
             yield json.dumps(row) + "\n"
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+# --------------------------------------------------------------------------- #
+# VoiceStudio – local ElevenLabs-style voice studio (see docs/VOICESTUDIO.md)
+# --------------------------------------------------------------------------- #
+@app.get("/api/voicestudio/status")
+def voicestudio_status():
+    snap = vs.probe(force=True, timeout=2.0)
+    return {**_voicestudio_summary(snap), "features": snap["features"], "engines": snap["tts_engines"], "probe_ms": snap["probe_ms"],
+            "voice_profiles": [v for v in snap["voices"] if v.get("type") == "profile"],
+            "models": [m["id"] for m in snap["models"] if not m.get("voicestudio", {}).get("alias_for_active_engine")]}
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+    voice: str = ""
+    model: str = ""
+    speed: float = Field(1.0, ge=0.5, le=2.0)
+    language: str = ""
+    instruct: str = ""
+
+
+async def _speak(req: SpeakRequest) -> dict:
+    """Synthesise through the *same* provider class the live agent uses, timing it like the agent would."""
+    tts = create_tts("voicestudio", req.model, req.language, req.instruct)
+    t0, first, chunks = time.perf_counter(), None, []
+    try:
+        async for pcm in tts.synthesize(req.text, voice_id=req.voice, speed=req.speed):
+            if first is None:
+                first = (time.perf_counter() - t0) * 1000
+            chunks.append(pcm)
+    finally:
+        await tts.aclose()
+    pcm = b"".join(chunks)
+    if not pcm:
+        raise vs.VoiceStudioError("VoiceStudio returned no audio.")
+    rate = tts.sample_rate
+    return {"pcm": pcm, "rate": rate, "ttfb_ms": first, "total_ms": (time.perf_counter() - t0) * 1000,
+            "audio_ms": len(pcm) / 2 / rate * 1000, "server": tts.last_stats or {}}
+
+
+@app.post("/api/voicestudio/speak")
+async def voicestudio_speak(req: SpeakRequest):
+    """Audition a voice: returns a WAV, with VoiceStudio's own TTFA/RTF in X-VS-* headers."""
+    try:
+        r = await _speak(req)
+    except Exception as e:
+        return JSONResponse({"error": vs.explain(e)}, status_code=502)
+    s = r["server"]
+    headers = {"X-VS-TTFB-Ms": f"{r['ttfb_ms']:.0f}", "X-VS-Total-Ms": f"{r['total_ms']:.0f}", "X-VS-Audio-Ms": f"{r['audio_ms']:.0f}",
+               "X-VS-TTFA-Ms": "" if s.get("ttfa_ms") is None else str(s["ttfa_ms"]), "X-VS-RTF": "" if s.get("rtf") is None else str(s["rtf"]),
+               "X-VS-Engine": str(s.get("engine") or ""), "X-VS-Transport": str(s.get("transport") or "")}
+    return Response(vs.pcm_to_wav(r["pcm"], r["rate"]), media_type="audio/wav", headers=headers)
+
+
+@app.post("/api/voicestudio/transcribe")
+async def voicestudio_transcribe(request: Request, sr: int = MIC_RATE, model: str = "", language: str = "en", prompt: str = ""):
+    """Transcribe a WAV, or raw PCM16 mono at `sr`, with VoiceStudio's active ASR engine."""
+    body = await request.body()
+    if not body:
+        return JSONResponse({"error": "empty body"}, status_code=400)
+    wav = body if body[:4] == b"RIFF" else to_wav(body, sr)
+    t0 = time.perf_counter()
+    try:
+        text = await vs.transcribe_wav(wav, model=model, language=language, prompt=prompt)
+    except Exception as e:
+        return JSONResponse({"error": vs.explain(e)}, status_code=502)
+    return {"text": text, "latency_ms": round((time.perf_counter() - t0) * 1000, 1), "audio_s": round(vs.wav_duration(wav), 2)}
+
+
+class SelfTestRequest(SpeakRequest):
+    text: str = "The quick brown fox jumps over the lazy dog. This voice is running locally."
+    language: str = "en"
+
+
+@app.post("/api/voicestudio/selftest")
+async def voicestudio_selftest(req: SelfTestRequest):
+    """text -> VoiceStudio TTS -> VoiceStudio ASR -> text: proves both directions and measures them the way the agent would."""
+    t0 = time.perf_counter()
+    try:
+        r = await _speak(req)
+        wav16 = to_wav(resample(r["pcm"], r["rate"], MIC_RATE), MIC_RATE)  # what the agent's STT would actually receive
+        t1 = time.perf_counter()
+        heard = await vs.transcribe_wav(wav16, language=req.language)
+        stt_ms = (time.perf_counter() - t1) * 1000
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": vs.explain(e)}, status_code=502)
+    w = vs.wer(req.text, heard)
+    s = r["server"]
+    return {
+        "ok": True, "reference": req.text, "heard": heard, "wer": round(w, 3), "match": w <= 0.15,
+        "tts": {"ttfb_ms": round(r["ttfb_ms"], 1), "render_ms": round(r["total_ms"], 1), "audio_ms": round(r["audio_ms"]), "sample_rate": r["rate"],
+                "server_ttfa_ms": s.get("ttfa_ms"), "rtf": s.get("rtf"), "engine": s.get("engine"), "transport": s.get("transport")},
+        "stt": {"latency_ms": round(stt_ms, 1)},
+        "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -24,6 +24,7 @@ from .audio import FRAME_BYTES, FRAME_MS, MIC_RATE, duration_ms, rms
 from .config import SessionConfig
 from .events import Clock, EventBus
 from .interrupt import SpokenSegment, split_heard
+from . import voicestudio as vs
 from .llm import LLMProvider, ToolCall, create_llm, ollama_models
 from .personas import PERSONAS, stt_prompt, system_prompt
 from .stt import STTSession, create_stt, load_whisper, warm_whisper, whisper_is_warm
@@ -203,12 +204,16 @@ class VoiceSession:
                 self.bus.emit("error", where=label, message=str(e)[:300])
                 return None
 
-        self.tts = await load("tts", create_tts, c.tts.provider, c.tts.model)
+        self.tts = await load("tts", create_tts, c.tts.provider, c.tts.model, c.tts.language, c.tts.instruct)
         self.llm = await load("llm", create_llm, c.llm.provider, c.llm.model, c.llm.mock_profile, c.persona)
         if getattr(self.tts, "name", "") == "piper":
             from .tts import load_piper
 
             await load("tts-voice", load_piper, c.tts.voice_id)
+        if getattr(self.tts, "name", "") == "voicestudio":
+            await load("tts-voice", vs.warm_tts, c.tts.model, c.tts.voice_id)  # load the engine before the first sentence
+        if c.stt.provider == "voicestudio":
+            await load("stt", vs.warm_asr, c.stt.model, c.stt.language)
         if c.stt.provider == "whisper-local":
             name = c.stt.model or self.stt.model  # type: ignore[attr-defined]
             if not whisper_is_warm(name):
@@ -255,8 +260,23 @@ class VoiceSession:
                 await self.llm.aclose()
             self.llm = await loop.run_in_executor(None, create_llm, new.llm.provider, new.llm.model, new.llm.mock_profile, new.persona)
             self._spawn(self._warm_llm())
-        if new.tts.provider != old.tts.provider or new.tts.model != old.tts.model:
-            self.tts = await loop.run_in_executor(None, create_tts, new.tts.provider, new.tts.model)
+        tts_key = lambda c: (c.tts.provider, c.tts.model, c.tts.language, c.tts.instruct)  # noqa: E731
+        if tts_key(new) != tts_key(old):
+            old_tts = self.tts
+            self.tts = await loop.run_in_executor(None, create_tts, new.tts.provider, new.tts.model, new.tts.language, new.tts.instruct)
+            if old_tts is not None and hasattr(old_tts, "aclose"):
+                with contextlib.suppress(Exception):
+                    await old_tts.aclose()
+            if new.tts.provider == "voicestudio" and new.tts.provider != old.tts.provider:
+                self.bus.emit("provider.loading", component="tts-voice")
+                with contextlib.suppress(Exception):
+                    await loop.run_in_executor(None, vs.warm_tts, new.tts.model, new.tts.voice_id)
+                self.bus.emit("provider.ready", component="tts-voice", ms=0)
+        if new.stt.provider == "voicestudio" and old.stt.provider != "voicestudio":
+            self.bus.emit("provider.loading", component="stt")
+            with contextlib.suppress(Exception):
+                await loop.run_in_executor(None, vs.warm_asr, new.stt.model, new.stt.language)
+            self.bus.emit("provider.ready", component="stt", ms=0)
         if new.persona != old.persona or new.system_prompt != old.system_prompt:
             self.messages[0] = {"role": "system", "content": system_prompt(new.persona, new.system_prompt)}
         self.bus.emit("config.applied", llm_model=getattr(self.llm, "model", ""), config=new.model_dump())
@@ -274,6 +294,9 @@ class VoiceSession:
         if self.llm:
             with contextlib.suppress(Exception):
                 await self.llm.aclose()
+        if self.tts is not None and hasattr(self.tts, "aclose"):
+            with contextlib.suppress(Exception):
+                await self.tts.aclose()  # e.g. VoiceStudio's pooled WebSocket
         self.bus.close()
 
     def _spawn(self, coro) -> asyncio.Task:
@@ -731,8 +754,9 @@ class VoiceSession:
             self.bus.emit("tts.request", turn_id=t.id, idx=s.idx, text=s.text, spoken=spoken if spoken != s.text else None)
             first = True
             n_bytes = 0
+            agen = tts.synthesize(spoken, voice_id=cfg.voice_id, speed=cfg.speed)
             try:
-                async for pcm in tts.synthesize(spoken, voice_id=cfg.voice_id, speed=cfg.speed):
+                async for pcm in agen:
                     now = self.clock.now_ms()
                     if first:
                         first = False
@@ -757,16 +781,25 @@ class VoiceSession:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                self.bus.emit("error", where="tts", message=f"{type(e).__name__}: {e}"[:300])
+                self.bus.emit("error", where="tts", message=(str(e) if isinstance(e, vs.VoiceStudioError) else f"{type(e).__name__}: {e}")[:300])
                 continue
+            finally:
+                # Close the provider's generator deterministically (barge-in cancels us mid-sentence): sockets and
+                # subprocesses must not wait for garbage collection.
+                with contextlib.suppress(Exception):
+                    await agen.aclose()
             end = self.clock.now_ms()
             s.synthesized = True
             t.tts_done_t = end
+            server = getattr(tts, "last_stats", None)  # e.g. VoiceStudio reports its own time-to-first-audio and RTF
+            if server:
+                self.bus.emit("tts.server_stats", turn_id=t.id, idx=s.idx, **server)
             t.tts_info = {
                 "provider": self.cfg.tts.provider, "streamed": tts.streaming,
                 "audio_ms": round(resp.audio_ms_sent),
                 "ttfb_ms": round((t.tts_first_byte_t or end) - (t.tts_req_t or end), 1),
                 "render_ms": round(end - (t.tts_req_t or end), 1),
+                **({"server": dict(server)} if server else {}),
             }
             self.bus.emit("tts.done", turn_id=t.id, idx=s.idx, render_ms=round(end - t_req, 1), audio_ms=round(s.audio_ms))
         if resp.audio_started:

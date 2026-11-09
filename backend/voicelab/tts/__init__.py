@@ -9,12 +9,15 @@ total render time is secondary because playback duration acts as a natural buffe
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import math
 import os
 import re
 import shutil
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from collections.abc import AsyncIterator
@@ -25,6 +28,7 @@ import numpy as np
 
 from ..audio import chunk, f32_to_pcm16, read_wav
 from ..config import Pronunciation, settings
+from .. import voicestudio as vs
 
 
 class TTSProvider(Protocol):
@@ -107,6 +111,146 @@ class PiperTTS:
                     yield c
         finally:
             stop.set()
+
+
+# --------------------------------------------------------------------------- #
+# VoiceStudio – local ElevenLabs-style voice studio (https://github.com/debpalash/VoiceStudio)
+#   primary : WebSocket /ws/tts  -> binary PCM16 24 kHz chunks, `done` frame carries the server's TTFA + RTF
+#   fallback: POST /v1/audio/speech (OpenAI-compatible, response_format=pcm)
+# VoiceStudio renders one sentence at a time and streams each as it is finished, so its time-to-first-audio is
+# "render the first sentence" – which is exactly why our sentence chunker feeds it sentence by sentence.
+# --------------------------------------------------------------------------- #
+class _WSUnavailable(Exception):
+    """/ws/tts could not be reached (older VoiceStudio, proxy…): fall back to the HTTP endpoint."""
+
+
+class VoiceStudioTTS:
+    name = "voicestudio"
+    sample_rate = vs.TTS_SAMPLE_RATE
+    streaming = True
+
+    def __init__(self, model: str = "", language: str = "", instruct: str = "") -> None:
+        self.model, self.language, self.instruct = model, language, instruct
+        self.transport = "ws"
+        self.last_stats: dict | None = None  # {"ttfa_ms", "rtf", "engine", "transport"} of the latest sentence
+        self.last_notice = ""
+        self._pool: list = []  # idle, healthy sockets – one handshake serves a whole conversation
+
+    # -- request -------------------------------------------------------------------------------
+    def _request(self, text: str, voice_id: str, speed: float) -> dict:
+        req: dict = {"text": text, "speed": speed}
+        if voice_id:
+            req["voice"] = voice_id
+        if self.model:
+            req["engine"] = self.model
+        if self.language:
+            req["language"] = self.language
+        if self.instruct:
+            req["instruct"] = self.instruct
+        return req
+
+    async def synthesize(self, text: str, *, voice_id: str, speed: float) -> AsyncIterator[bytes]:
+        self.last_stats, self.last_notice = None, ""
+        if self.transport == "ws":
+            try:
+                async for pcm in self._ws_synth(text, voice_id, speed):
+                    yield pcm
+                return
+            except _WSUnavailable:
+                self.transport = "http"  # remember: don't retry the handshake for every sentence
+        try:
+            async for pcm in self._http_synth(text, voice_id, speed):
+                yield pcm
+        except (httpx.HTTPError, OSError) as e:
+            raise vs.VoiceStudioError(vs.explain(e)) from e
+
+    # -- websocket -----------------------------------------------------------------------------
+    async def _checkout(self):
+        import websockets
+
+        while self._pool:
+            ws = self._pool.pop()
+            if getattr(ws, "close_code", None) is None:
+                return ws
+        try:
+            return await websockets.connect(vs.ws_url("/ws/tts"), additional_headers=vs.auth_headers() or None,
+                                            max_size=None, open_timeout=5, ping_interval=None)
+        except (websockets.InvalidHandshake, asyncio.TimeoutError) as e:
+            # A refused handshake is ambiguous (an unknown route and a bad key are both HTTP 403), so fall back to
+            # the HTTP endpoint – which answers a genuine auth failure with an explicit, explainable 401.
+            raise _WSUnavailable(str(e)) from e
+        except OSError as e:
+            raise vs.VoiceStudioError(vs.explain(e)) from e
+
+    async def _ws_synth(self, text: str, voice_id: str, speed: float) -> AsyncIterator[bytes]:
+        ws = await self._checkout()
+        clean, carry = False, b""
+        try:
+            await ws.send(json.dumps(self._request(text, voice_id, speed)))
+            while True:
+                msg = await asyncio.wait_for(ws.recv(), timeout=180)  # a cold engine may need a while to load
+                if isinstance(msg, (bytes, bytearray)):
+                    b = carry + bytes(msg)
+                    if len(b) % 2:
+                        b, carry = b[:-1], b[-1:]
+                    else:
+                        carry = b""
+                    if b:
+                        yield b
+                    continue
+                d = json.loads(msg)
+                kind = d.get("type")
+                if kind == "start":
+                    self.sample_rate = int(d.get("sample_rate") or vs.TTS_SAMPLE_RATE)
+                elif kind == "routing":
+                    self.last_notice = str(d.get("reason") or d.get("detail") or d.get("message") or "")
+                elif kind == "done":
+                    self.last_stats = {"ttfa_ms": d.get("ttfa_ms"), "rtf": d.get("rtf"), "engine": d.get("engine"),
+                                       "duration_s": d.get("duration_s"), "gen_time_s": d.get("gen_time_s"), "transport": "ws"}
+                    clean = True
+                    break
+                elif kind == "error":
+                    raise vs.VoiceStudioError(str(d.get("detail") or d.get("message") or "VoiceStudio TTS error"))
+        finally:
+            if clean:
+                self._pool.append(ws)  # healthy and idle: reuse for the next sentence
+            else:  # cancelled (barge-in), failed or half-read: never reuse – stale frames would leak into the next request
+                with contextlib.suppress(Exception):
+                    await ws.close()
+
+    # -- HTTP fallback -------------------------------------------------------------------------
+    async def _http_synth(self, text: str, voice_id: str, speed: float) -> AsyncIterator[bytes]:
+        body: dict = {"model": self.model or "omnivoice", "input": text, "voice": voice_id or "default",
+                      "response_format": "pcm", "speed": speed, "stream_format": "audio"}
+        if self.language:
+            body["language"] = self.language
+        if self.instruct:
+            body["instruct"] = self.instruct
+        t0 = time.perf_counter()
+        first, carry = None, b""
+        async with httpx.AsyncClient(base_url=vs.base_url(), headers=vs.auth_headers(), timeout=300) as c:
+            async with c.stream("POST", "/v1/audio/speech", json=body) as r:
+                if r.status_code >= 400:
+                    await r.aread()
+                r.raise_for_status()
+                self.sample_rate = vs.TTS_SAMPLE_RATE
+                async for b in r.aiter_bytes(4800):
+                    b = carry + b
+                    if len(b) % 2:
+                        b, carry = b[:-1], b[-1:]
+                    else:
+                        carry = b""
+                    if b:
+                        if first is None:
+                            first = (time.perf_counter() - t0) * 1000
+                        yield b
+        self.last_stats = {"ttfa_ms": round(first, 1) if first else None, "rtf": None, "engine": self.model or "omnivoice",
+                           "transport": "http"}
+
+    async def aclose(self) -> None:
+        while self._pool:
+            with contextlib.suppress(Exception):
+                await self._pool.pop().close()
 
 
 # --------------------------------------------------------------------------- #
@@ -257,7 +401,9 @@ class MockTTS:
             await asyncio.sleep(0.004)  # renders far faster than real time (like a good streaming TTS)
 
 
-def create_tts(provider: str, model: str = "") -> TTSProvider:
+def create_tts(provider: str, model: str = "", language: str = "", instruct: str = "") -> TTSProvider:
+    if provider == "voicestudio":
+        return VoiceStudioTTS(model, language, instruct)
     if provider == "piper" and piper_voices():
         return PiperTTS()
     if provider == "openai":
