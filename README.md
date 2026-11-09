@@ -16,6 +16,7 @@ A streaming voice-agent pipeline you can talk to — with every millisecond, tur
   <img alt="Local first" src="https://img.shields.io/badge/runs-100%25%20local-2ea44f?style=flat-square">
   <img alt="No API keys" src="https://img.shields.io/badge/API%20keys-optional-6250d6?style=flat-square">
   <img alt="VoiceStudio" src="https://img.shields.io/badge/VoiceStudio-your%20own%20voices-e0457b?style=flat-square">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
 </p>
 
 <img src="docs/assets/demo.gif" alt="VoiceLab live: a caller pauses mid-sentence, the semantic turn detector holds the timer, then the agent answers" width="940">
@@ -209,6 +210,12 @@ Headless smoke test of the real pipeline (prints every event): `cd backend && .v
 * **Port in use** — backend `:8000`, Vite `:5173`, LiveKit `:7880`, VoiceStudio `:3900`.
 
 </details>
+
+## License
+
+VoiceLab is released under the [MIT License](LICENSE). It talks to other software and models that have **their own terms**:
+[VoiceStudio](https://github.com/debpalash/VoiceStudio) is a separate AGPL-3.0 program used only over its network API, and model weights
+(for example the non-commercial OmniVoice) carry their own licences — see [docs/VOICESTUDIO.md](docs/VOICESTUDIO.md#licences).
 
 ---
 
