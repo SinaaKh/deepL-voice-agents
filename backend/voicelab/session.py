@@ -26,7 +26,7 @@ from .events import Clock, EventBus
 from .interrupt import SpokenSegment, split_heard
 from .llm import LLMProvider, ToolCall, create_llm, ollama_models
 from .personas import PERSONAS, stt_prompt, system_prompt
-from .stt import STTSession, create_stt, load_whisper, whisper_loaded
+from .stt import STTSession, create_stt, load_whisper, warm_whisper, whisper_is_warm
 from .tools import ToolBox
 from .tts import TTSProvider, apply_pronunciations, create_tts
 from .turn import HeuristicSemanticDetector, TurnPolicy
@@ -150,7 +150,8 @@ class VoiceSession:
         self.bus = EventBus(self.clock)
         self.toolbox = ToolBox()
         self.detector = HeuristicSemanticDetector()
-        self.stt_hint: str | None = None  # set by the scenario player for the mock STT
+        self.stt_hint: str | None = None  # (kept for compatibility) – see stt_feed()
+        self._stt_pending = ""  # scripted words spoken but not yet claimed by a turn (oracle STT only)
 
         self.user_speaking = False
         self.agent_state = "idle"
@@ -210,8 +211,8 @@ class VoiceSession:
             await load("tts-voice", load_piper, c.tts.voice_id)
         if c.stt.provider == "whisper-local":
             name = c.stt.model or self.stt.model  # type: ignore[attr-defined]
-            if not whisper_loaded(name):
-                await load("stt", load_whisper, name)
+            if not whisper_is_warm(name):
+                await load("stt", warm_whisper, name)
         self.bus.emit(
             "session.ready",
             llm_model=getattr(self.llm, "model", ""),
@@ -245,9 +246,9 @@ class VoiceSession:
             self.stt = create_stt(new.stt.provider, new.stt.model, new.stt.language, stt_prompt(new.persona, new.stt.prompt))
             if new.stt.provider == "whisper-local":
                 nm = new.stt.model or self.stt.model  # type: ignore[attr-defined]
-                if not whisper_loaded(nm):
+                if not whisper_is_warm(nm):
                     self.bus.emit("provider.loading", component="stt")
-                    await loop.run_in_executor(None, load_whisper, nm)
+                    await loop.run_in_executor(None, warm_whisper, nm)
                     self.bus.emit("provider.ready", component="stt", ms=0)
         if new.llm != old.llm or new.persona != old.persona:
             if self.llm:
@@ -312,6 +313,17 @@ class VoiceSession:
         if tr and tr.kind == "speech_end":
             self._on_speech_end(tr.t_ms)
 
+    def stt_feed(self, text: str) -> None:
+        """Scenario hook for the scripted ("oracle") STT: announce what the caller is about to say.
+
+        Words go to the currently open turn if there is one (the caller resumed mid-turn), otherwise they wait
+        for the next turn. This keeps the oracle honest: it only ever knows what has been *spoken so far*."""
+        t = self._turn
+        if t is not None and t.stt is not None and hasattr(t.stt, "hint"):
+            t.stt.hint = (t.stt.hint + " " + text).strip()
+        else:
+            self._stt_pending = (self._stt_pending + " " + text).strip()
+
     def _push_stt(self, idx: int, frame: bytes) -> None:
         if self._turn and self._turn.stt and idx > self._last_pushed:
             self._turn.stt.push(frame)
@@ -339,8 +351,9 @@ class VoiceSession:
 
         if self._turn is None:
             self._turn_seq += 1
-            turn = Turn(id=self._turn_seq, speech_start_t=t_start, hint=self.stt_hint)
-            turn.stt = self.stt.open(lambda text, tn=turn: self._on_interim(tn, text), self.stt_hint)
+            pending, self._stt_pending = self._stt_pending or self.stt_hint, ""
+            turn = Turn(id=self._turn_seq, speech_start_t=t_start, hint=pending)
+            turn.stt = self.stt.open(lambda text, tn=turn: self._on_interim(tn, text), pending)
             self._turn = turn
             self.bus.emit("turn.start", turn_id=turn.id)
         # flush the prefix padding (audio from just before detection) into STT
@@ -796,7 +809,9 @@ class VoiceSession:
         async def watch() -> None:
             await asyncio.sleep(self.cfg.interrupt.min_duration_ms / 1000)
             if self.tracker.speaking and self.agent_state in BUSY:
-                await self._interrupt("barge-in")
+                # Run the interrupt as its own task: a later speech_end cancels *this* watcher, and must not be
+                # able to abort a barge-in that is already flushing playout and truncating history.
+                self._spawn(self._interrupt("barge-in"))
 
         self._intr_task = asyncio.create_task(watch())
 

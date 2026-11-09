@@ -174,51 +174,30 @@ async def run_scenario(session: VoiceSession, scenario_id: str, voice: str = USE
         if st["op"] == "user":
             audio[i] = await synth_user(st["text"], voice)
 
-    # The mock STT needs to know what was said (it cannot hear): group consecutive user steps.
-    hints: dict[int, str] = {}
-    i = 0
-    while i < len(steps):
-        if steps[i]["op"] == "user":
-            j, parts = i, []
-            while j < len(steps) and steps[j]["op"] in ("user", "pause"):
-                if steps[j]["op"] == "user":
-                    parts.append(steps[j]["text"])
-                j += 1
-            hints[i] = " ".join(parts)
-            i = j
-        else:
-            i += 1
-
     pacer = _Pacer(session)
     # let the greeting finish before the caller speaks
     await _until(pacer, lambda: session.agent_state == "idle" and session._resp is None, 25)
     await pacer.quiet(400)
-    in_group = False
     try:
         for i, st in enumerate(steps):
             op = st["op"]
             bus.emit("scenario.step", i=i, op=op, text=st.get("text"), ms=st.get("ms"))
             if op == "user":
-                if not in_group:
-                    session.stt_hint = hints.get(i)
-                    in_group = True
-                pcm = audio[i]
-                await pacer.play(silence(120) + pcm)
+                session.stt_feed(st["text"])  # the oracle STT learns the words as they are spoken
+                await pacer.play(silence(120) + audio[i])
             elif op == "pause":
                 await pacer.quiet(st["ms"])
             elif op == "wait":
                 await pacer.quiet(st["ms"])
             elif op == "wait_speaking":
-                in_group = False
                 await _until(pacer, lambda: session.agent_state == "speaking", st.get("timeout", 15))
             elif op == "wait_response":
-                in_group = False
                 seq0 = session._resp_seq
                 await _until(pacer, lambda: session._resp_seq > seq0 or session.agent_state != "idle", st.get("timeout", 12))
                 await _until(pacer, lambda: session.agent_state == "idle" and session._resp is None, st.get("timeout", 40))
                 await pacer.quiet(300)
     finally:
-        session.stt_hint = None
+        session._stt_pending = ""
         bus.emit("scenario.done", id=scenario_id)
 
 

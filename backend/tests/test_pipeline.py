@@ -202,3 +202,48 @@ def test_websocket_session_streams_events_and_audio_and_handles_flush():
                 got_interrupt = True
                 assert ev["played_ms"] == 900 and ev["heard_text"]
         assert got_flush and got_interrupt
+
+
+async def test_oracle_stt_only_knows_the_words_spoken_so_far():
+    """The scripted STT must not leak the rest of the sentence at the first pause (that would defeat turn detection)."""
+    s = VoiceSession(mock_cfg())
+    s.stt_feed("Hi, I'd like a table for")
+    s.tracker.speaking = True
+    s._on_speech_start(0.0)  # opens a turn, claiming the words announced so far
+    assert s._turn.stt.hint == "Hi, I'd like a table for"
+    assert await s._turn.stt.flush_interim() == "Hi, I'd like a table for"
+    s.stt_feed("four people at seven")  # the caller resumes inside the same turn
+    assert await s._turn.stt.flush_interim() == "Hi, I'd like a table for four people at seven"
+    s._turn = None  # turn fired; words spoken afterwards belong to the next turn
+    s.stt_feed("The name is Johnson")
+    assert s._stt_pending == "The name is Johnson"
+    await s.close()
+
+
+async def test_barge_in_survives_the_caller_pausing_while_the_flush_is_in_flight():
+    """Regression: a speech_end during the flush handshake used to cancel the watcher task that was *running* the
+    interrupt, leaving history untruncated and the agent in limbo (no `interrupt` event)."""
+    s = VoiceSession(mock_cfg(interrupt={"enabled": True, "min_duration_ms": 100}))
+    await s.start(greet=False)
+    await s.on_text("Tell me about your menu.")
+    evs, _ = await collect_until(s, "response.audio_start")
+    rid = evs[-1]["response_id"]
+    await asyncio.sleep(0.4)
+    s.on_playback(rid, 1500)
+
+    s.tracker.speaking = True
+    s._on_speech_start(0.0)  # caller starts talking over the agent -> interrupt watcher armed
+    while True:  # the server asks the browser to flush
+        item = await asyncio.wait_for(s.bus.get(), 5)
+        if isinstance(item, dict) and item["type"] == "flush":
+            break
+    s.tracker.speaking = False
+    s._on_speech_end(100.0)  # ...and the caller pauses right now (e.g. after "Sorry,")
+    s.on_flushed(rid, 1500)
+    await asyncio.sleep(0.4)
+
+    done = [e for e in s.bus.history if e["type"] == "interrupt"]
+    assert done and done[0]["played_ms"] == 1500 and done[0]["heard_text"], "interrupt must complete"
+    assert s.messages[-2:][0]["role"] in ("user", "assistant") and any(m.get("_interrupted") for m in s.messages)
+    assert s.agent_state == "idle" and s._resp is None
+    await s.close()

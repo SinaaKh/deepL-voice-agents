@@ -74,6 +74,24 @@ def whisper_loaded(name: str) -> bool:
     return name in _whisper_models
 
 
+_whisper_warm: set[str] = set()
+
+
+def warm_whisper(name: str) -> None:
+    """Load the model AND run one dummy inference. The first real decode after loading is several times
+    slower (graph setup), which would otherwise eat the first caller's end-of-turn budget."""
+    import numpy as np
+
+    load_whisper(name)
+    if name not in _whisper_warm:
+        _whisper_transcribe(name, np.zeros(16000, dtype="<i2").tobytes(), "en", None)
+        _whisper_warm.add(name)
+
+
+def whisper_is_warm(name: str) -> bool:
+    return name in _whisper_warm
+
+
 def _whisper_transcribe(model_name: str, pcm: bytes, language: str, prompt: str | None) -> str:
     import numpy as np
 

@@ -31,7 +31,7 @@ from .personas import PERSONAS
 from .realtime import RealtimeSession
 from .scenarios import list_scenarios, run_scenario
 from .session import VoiceSession
-from .stt import whisper_loaded
+from .stt import whisper_is_warm
 from .tts import ELEVEN_VOICES, piper_voices, say_voices
 from .turn.sim import DATASET, SimRequest, simulate, sweep
 from .vad import find_silero_model
@@ -88,7 +88,7 @@ def providers():
         ],
         "stt": [
             {"id": "whisper-local", "label": "Whisper (local, faster-whisper)", "available": True, "reason": "", "local": True, "streaming": True,
-             "models": ["tiny.en", "base.en", "small.en"], "default": settings.whisper_model, "loaded": whisper_loaded(settings.whisper_model)},
+             "models": ["tiny.en", "base.en", "small.en"], "default": settings.whisper_model, "loaded": whisper_is_warm(settings.whisper_model)},
             {"id": "openai", "label": "OpenAI transcribe", "available": keys["openai"], "reason": "" if keys["openai"] else "set OPENAI_API_KEY in .env",
              "local": False, "streaming": False, "models": ["gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"], "default": "gpt-4o-mini-transcribe"},
             {"id": "deepgram", "label": "Deepgram (streaming)", "available": keys["deepgram"], "reason": "" if keys["deepgram"] else "set DEEPGRAM_API_KEY in .env",
