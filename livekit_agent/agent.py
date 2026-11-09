@@ -52,10 +52,13 @@ logger = logging.getLogger("voicelab.agent")
 logging.basicConfig(level=logging.INFO)
 
 # Knobs you can turn without touching the code ------------------------------------------------
-STT_PROVIDER = os.getenv("LK_STT", "openai")            # openai | deepgram
+STT_PROVIDER = os.getenv("LK_STT", "openai")            # openai | deepgram | voicestudio (local)
 LLM_PROVIDER = os.getenv("LK_LLM", "openai")            # openai | groq | cerebras | together | ollama
-LLM_MODEL = os.getenv("LK_LLM_MODEL", "gpt-4o-mini")    # try gpt-4o to reproduce the Lesson 5 TTFT comparison
-TTS_PROVIDER = os.getenv("LK_TTS", "elevenlabs")        # elevenlabs | openai
+LLM_MODEL = os.getenv("LK_LLM_MODEL") or ("llama3.2" if LLM_PROVIDER == "ollama" else "gpt-4o-mini")  # try gpt-4o to reproduce the Lesson 5 TTFT comparison
+TTS_PROVIDER = os.getenv("LK_TTS", "elevenlabs")        # elevenlabs | openai | voicestudio (local)
+# VoiceStudio (local ElevenLabs-style studio) speaks the OpenAI audio API, so the stock OpenAI plugins work unchanged.
+VOICESTUDIO_V1 = (os.getenv("VOICESTUDIO_URL") or "http://127.0.0.1:3900").rstrip("/") + "/v1"
+VOICESTUDIO_KEY = os.getenv("VOICESTUDIO_API_KEY") or os.getenv("OMNIVOICE_API_KEY") or "local"  # loopback needs no real key
 VOICE_ID = os.getenv("LK_VOICE_ID", "CwhRBWXzGAHq8TQ4Fs17")  # ElevenLabs "Roger" – the voice swapped in during Lesson 4
 TURN_MODE = os.getenv("LK_TURN", "semantic")            # semantic (VAD + transformer) | vad
 MIN_ENDPOINTING = float(os.getenv("LK_MIN_ENDPOINTING_DELAY", "0.5"))  # the VAD silence timer, seconds
@@ -121,6 +124,8 @@ class Assistant(Agent):
 # Provider factories – this is the "pipeline" idea: every stage is a swappable plugin.
 # --------------------------------------------------------------------------------------------
 def make_stt():
+    if STT_PROVIDER == "voicestudio":  # whatever ASR engine is active in the local VoiceStudio
+        return openai.STT(model=os.getenv("LK_STT_MODEL", "whisper-1"), base_url=VOICESTUDIO_V1, api_key=VOICESTUDIO_KEY, language="en")
     if STT_PROVIDER == "deepgram":
         return deepgram.STT(model="nova-3")  # true streaming STT → STTMetrics.streamed == True
     return openai.STT(model=os.getenv("LK_STT_MODEL", "gpt-4o-mini-transcribe"))
@@ -139,6 +144,9 @@ def make_llm():
 
 
 def make_tts():
+    if TTS_PROVIDER == "voicestudio":  # your cloned/designed voices; LK_VOICE_ID = a VoiceStudio profile id or name
+        return openai.TTS(model=os.getenv("LK_TTS_MODEL", "tts-1"), voice=os.getenv("LK_VOICE_ID", "default"), base_url=VOICESTUDIO_V1,
+                          api_key=VOICESTUDIO_KEY, response_format="pcm")  # raw 24 kHz s16le: no decoding step
     if TTS_PROVIDER == "openai":
         return openai.TTS(voice=os.getenv("LK_OPENAI_VOICE", "alloy"))
     # Swapping `voice_id` changes the agent's persona instantly.
