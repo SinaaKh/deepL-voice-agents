@@ -8,3 +8,4 @@ backend/models/
 .pytest_cache/
 .DS_Store
 *.tsbuildinfo
+.voicestudio/

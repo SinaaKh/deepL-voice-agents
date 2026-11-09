@@ -4,7 +4,8 @@ PY    := backend/.venv/bin/python
 UV    := UV_HTTP_TIMEOUT=300 uv
 
 .DEFAULT_GOAL := help
-.PHONY: help setup models start dev backend frontend build test agent agent-console agent-models livekit-server demo-agent clean
+.PHONY: help setup models start dev backend frontend build test agent agent-console agent-models livekit-server demo-agent clean \
+        studio-install studio-up studio-down studio-status studio-models studio-licences studio-test studio-logs
 
 help:                ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -40,6 +41,31 @@ frontend:            ## Vite dev server only
 test:                ## run the backend test-suite + type-check the dashboard
 	cd backend && ../$(PY) -m pytest -q
 	cd frontend && npx tsc -b
+
+# ---- VoiceStudio (local ElevenLabs-style voice studio; see docs/VOICESTUDIO.md) -------------------
+studio-install:      ## clone + build a local VoiceStudio next to this repo (downloads PyTorch; ~2 GB)
+	python3 scripts/voicestudio.py install
+
+studio-up:           ## start VoiceStudio's headless backend on :3900 (waits until it answers)
+	python3 scripts/voicestudio.py up
+
+studio-down:         ## stop the VoiceStudio backend started by `studio-up`
+	python3 scripts/voicestudio.py down
+
+studio-status:       ## is VoiceStudio up? engines, voices, version
+	python3 scripts/voicestudio.py status
+
+studio-models:       ## list VoiceStudio's engines/models (install one: scripts/voicestudio.py models install <repo_id> --yes)
+	python3 scripts/voicestudio.py models
+
+studio-licences:     ## show which installed models still need their licence accepted
+	python3 scripts/voicestudio.py licences
+
+studio-test:         ## run the integration tests against the REAL running VoiceStudio (needs models + licences)
+	cd backend && VOICESTUDIO_LIVE=1 ../$(PY) -m pytest -q tests/test_voicestudio_live.py
+
+studio-logs:         ## tail the VoiceStudio backend log
+	python3 scripts/voicestudio.py logs -f
 
 # ---- LiveKit ---------------------------------------------------------------------------------
 livekit-server:      ## local LiveKit dev server (brew install livekit) – key "devkey", secret "secret"
