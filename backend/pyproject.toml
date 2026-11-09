@@ -1,0 +1,39 @@
+[project]
+name = "voicelab"
+version = "0.1.0"
+description = "VoiceLab — an interactive lab for the DeepLearning.AI 'Building AI Voice Agents for Production' course"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "websockets>=13",
+  "httpx>=0.27",
+  "pydantic>=2.7",
+  "numpy>=1.26",
+  "onnxruntime>=1.18",
+  "faster-whisper>=1.1",
+  "openai>=1.50",
+  "anthropic>=0.40",
+  "python-dotenv>=1.0",
+  "livekit-api>=1.0",
+]
+
+[project.optional-dependencies]
+# The course-faithful LiveKit Agents worker (livekit_agent/agent.py)
+livekit = [
+  "livekit-agents>=1.0",
+  "livekit-plugins-openai",
+  "livekit-plugins-silero",
+  "livekit-plugins-elevenlabs",
+  "livekit-plugins-deepgram",
+  "livekit-plugins-turn-detector",
+]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.uv]
+package = false
