@@ -8,6 +8,9 @@ export interface TTSConfig {
   provider: string; voice_id: string; speed: number; model: string
   pronunciations: Pronunciation[]
   chunking: { strategy: 'sentence' | 'eager'; min_chars: number }
+  /** VoiceStudio: describe the voice/style in words, and pin a language */
+  instruct?: string
+  language?: string
 }
 export interface SessionConfig {
   architecture: 'pipeline' | 'realtime'
@@ -35,6 +38,22 @@ export interface Providers {
   vad: ProviderInfo[]; stt: ProviderInfo[]; llm: ProviderInfo[]; tts: ProviderInfo[]
   realtime: { available: boolean; reason: string; models: string[]; voices: string[] }
   livekit: { configured: boolean; url: string }
+  voicestudio: VoiceStudioSummary
+}
+export interface VoiceStudioSummary {
+  reachable: boolean; url: string; version: string | null; device: string | null; engines_loading: boolean; auth_required: boolean
+  asr_engine: string | null; tts_engines: string[]; voices: number; error: string; hint: string; installed: boolean; home: string
+}
+export interface VoiceStudioStatus extends VoiceStudioSummary {
+  features: Record<string, boolean>; probe_ms: number | null
+  engines: { id: string; display_name?: string; available: boolean; reason?: string | null }[]
+  voice_profiles: { voice_id: string; name: string; language?: string | null }[]
+  models: string[]
+}
+export interface VoiceStudioSelfTest {
+  ok: boolean; error?: string; reference: string; heard: string; wer: number; match: boolean; total_ms: number
+  tts: { ttfb_ms: number; render_ms: number; audio_ms: number; sample_rate: number; server_ttfa_ms: number | null; rtf: number | null; engine: string | null; transport: string | null }
+  stt: { latency_ms: number }
 }
 export interface Persona { id: string; name: string; focus: string; blurb: string; greeting: string; system_prompt: string; stt_prompt?: string }
 export interface Scenario {
@@ -55,7 +74,7 @@ export interface TurnMetrics {
   llm: { model: string; provider: string; ttft_ms: number | null; tokens_per_second: number | null; prompt_tokens: number; completion_tokens: number; rounds: number; estimated_usage: boolean }
   stt: { audio_ms?: number; streamed?: boolean; finalize_ms?: number; provider?: string }
   eou: { end_of_utterance_delay_ms: number | null; transcription_delay_ms: number | null; mode: string; extended: boolean; p_eot: number | null }
-  tts: { provider?: string; streamed?: boolean; audio_ms?: number; ttfb_ms?: number; render_ms?: number }
+  tts: { provider?: string; streamed?: boolean; audio_ms?: number; ttfb_ms?: number; render_ms?: number; server?: { ttfa_ms?: number | null; rtf?: number | null; engine?: string | null; transport?: string | null } }
   guardrail: string
   vad: { min_speech_ms?: number; audio_total_ms?: number; audio_sent_to_stt_ms?: number }
 }
@@ -69,7 +88,7 @@ export const DEFAULT_CONFIG: SessionConfig = {
   interrupt: { enabled: true, min_duration_ms: 320 },
   stt: { provider: 'whisper-local', model: 'base.en', language: 'en' },
   llm: { provider: 'ollama', model: '', temperature: 0.4, max_tokens: 220, mock_profile: 'gpt-4o-mini' },
-  tts: { provider: 'piper', voice_id: '', speed: 1, model: '', pronunciations: [{ match: 'Bella Notte', say: 'Bella Not-tay' }], chunking: { strategy: 'sentence', min_chars: 18 } },
+  tts: { provider: 'piper', voice_id: '', speed: 1, model: '', pronunciations: [{ match: 'Bella Notte', say: 'Bella Not-tay' }], chunking: { strategy: 'sentence', min_chars: 18 }, instruct: '', language: '' },
   guardrails: { enabled: false, blocked_terms: ['password', 'credit card number'] },
   realtime_model: 'gpt-realtime',
   realtime_voice: 'marin',

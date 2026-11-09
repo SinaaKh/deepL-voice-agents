@@ -75,7 +75,7 @@ function Setup({ configured, url }: { configured: boolean; url: string }) {
           <div className="mt-1 text-[11px] text-fg3">No server? <code>make agent-console</code> talks to the same agent in your terminal.</div></li>
         <li><b className="text-fg">4 · Connect</b> from the panel on the right — or use the hosted <i>LiveKit Playground</i> with the same project keys.</li>
       </ol>
-      <p className="mt-3 rounded-lg bg-inset p-2.5 text-[11.5px] leading-snug text-fg3">Swap models without editing code: <code>LK_LLM_MODEL=gpt-4o</code> vs <code>gpt-4o-mini</code> reproduces the Lesson 5 TTFT experiment; <code>LK_VOICE_ID</code> switches the ElevenLabs voice; <code>LK_TURN=vad</code> disables the semantic turn detector.</p>
+      <p className="mt-3 rounded-lg bg-inset p-2.5 text-[11.5px] leading-snug text-fg3">Swap models without editing code: <code>LK_LLM_MODEL=gpt-4o</code> vs <code>gpt-4o-mini</code> reproduces the Lesson 5 TTFT experiment; <code>LK_VOICE_ID</code> switches the ElevenLabs voice; <code>LK_TURN=vad</code> disables the semantic turn detector; <code>LK_STT=voicestudio LK_TTS=voicestudio LK_LLM=ollama</code> runs the whole agent locally with your own <a className="text-accent underline" href="#/voicestudio">VoiceStudio</a> voices.</p>
     </Card>
   )
 }

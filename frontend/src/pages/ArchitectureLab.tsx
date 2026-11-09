@@ -217,6 +217,8 @@ function Ecosystem() {
     { layer: 'TTS', name: 'Piper (local)', id: 'piper', list: 'tts', good: 'free, neural, ~60 ms TTFB on CPU', color: 'var(--c-tts)' },
     { layer: 'TTS', name: 'ElevenLabs', id: 'elevenlabs', list: 'tts', good: 'custom voice clones, expressive', color: 'var(--c-tts)' },
     { layer: 'TTS', name: 'OpenAI TTS', id: 'openai', list: 'tts', good: 'streaming PCM, simple', color: 'var(--c-tts)' },
+    { layer: 'STT', name: 'VoiceStudio ASR (local)', id: 'voicestudio', list: 'stt', good: 'local MLX/whisper.cpp engines behind one OpenAI-style API', color: 'var(--c-stt)' },
+    { layer: 'TTS', name: 'VoiceStudio (local)', id: 'voicestudio', list: 'tts', good: 'your cloned & designed voices, streamed sentence by sentence', color: 'var(--c-tts)' },
     { layer: 'TTS', name: 'macOS say', id: 'macos-say', list: 'tts', good: 'free baseline – and a non-streaming example', color: 'var(--c-tts)' },
   ]
   return (

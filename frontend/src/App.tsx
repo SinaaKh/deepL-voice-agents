@@ -1,4 +1,4 @@
-import { AudioLines, Gauge, Layers, LayoutDashboard, Moon, Network, Radio, Sun, Timer } from 'lucide-react'
+import { AudioLines, Gauge, Layers, LayoutDashboard, Moon, Network, Radio, Sun, Timer, Waves } from 'lucide-react'
 import { Suspense, lazy, useEffect, useState, type ComponentType } from 'react'
 import { Badge, cx } from './components/ui'
 import { api } from './lib/api'
@@ -11,6 +11,7 @@ const TransportLab = lazy(() => import('./pages/TransportLab'))
 const LatencyLab = lazy(() => import('./pages/LatencyLab'))
 const ArchitectureLab = lazy(() => import('./pages/ArchitectureLab'))
 const LiveKitPage = lazy(() => import('./pages/LiveKitPage'))
+const VoiceStudioPage = lazy(() => import('./pages/VoiceStudioPage'))
 
 const ROUTES: { id: string; label: string; icon: typeof Gauge; group: string; lesson?: string; el: ComponentType }[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, group: '', el: Overview },
@@ -20,6 +21,7 @@ const ROUTES: { id: string; label: string; icon: typeof Gauge; group: string; le
   { id: 'latency', label: 'Latency Lab', icon: Gauge, group: 'Labs', lesson: 'L1 · L5', el: LatencyLab },
   { id: 'architecture', label: 'Architecture Lab', icon: Layers, group: 'Labs', lesson: 'L1 · L4', el: ArchitectureLab },
   { id: 'livekit', label: 'LiveKit', icon: Radio, group: 'Production', lesson: 'L1 · L3 · L4 · L5', el: LiveKitPage },
+  { id: 'voicestudio', label: 'VoiceStudio', icon: Waves, group: 'Production', lesson: 'L4', el: VoiceStudioPage },
 ]
 
 function useHash() {

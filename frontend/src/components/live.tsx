@@ -112,6 +112,8 @@ export function MetricsPanel({ m }: { m?: TurnMetrics }) {
           <Stat label="audio" value={m.tts.audio_ms != null ? (m.tts.audio_ms / 1000).toFixed(1) : '—'} unit="s" />
           <Stat label="render" value={m.tts.render_ms != null ? Math.round(m.tts.render_ms) : '—'} unit="ms" />
           <Stat label="streamed" value={m.tts.streamed == null ? '—' : m.tts.streamed ? 'true' : 'false'} tone={m.tts.streamed ? 'good' : m.tts.streamed === false ? 'warn' : undefined} />
+          {m.tts.server && <Stat label="server ttfa" value={m.tts.server.ttfa_ms != null ? Math.round(m.tts.server.ttfa_ms) : '—'} unit="ms" sub={m.tts.server.engine ?? undefined} />}
+          {m.tts.server?.rtf != null && <Stat label="rtf" value={m.tts.server.rtf.toFixed(2)} sub="render ÷ audio" tone={m.tts.server.rtf < 1 ? 'good' : 'warn'} />}
         </Family>
       </div>
       {m.vad.audio_total_ms ? (

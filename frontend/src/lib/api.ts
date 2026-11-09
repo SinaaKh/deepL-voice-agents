@@ -1,4 +1,4 @@
-import type { Persona, Providers, Scenario } from './types'
+import type { Persona, Providers, Scenario, VoiceStudioSelfTest, VoiceStudioStatus } from './types'
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -18,6 +18,17 @@ export const api = {
   livekitToken: (room: string) => j<{ token: string; url: string; room: string; identity: string }>(`/api/livekit/token?room=${encodeURIComponent(room)}`),
   source: (name: string) => j<{ name: string; text: string }>(`/api/source/${name}`),
   health: () => j<{ ok: boolean }>('/api/health'),
+  voicestudioStatus: () => j<VoiceStudioStatus>('/api/voicestudio/status'),
+  voicestudioSelftest: (body: unknown) => fetch('/api/voicestudio/selftest', post(body)).then((r) => r.json() as Promise<VoiceStudioSelfTest>),
+}
+
+export interface SpeakMetrics { ttfbMs: number; totalMs: number; audioMs: number; ttfaMs: number | null; rtf: number | null; engine: string; transport: string }
+/** Audition a VoiceStudio voice: returns the WAV plus the timings VoiceStudio and VoiceLab measured. */
+export async function voicestudioSpeak(body: unknown): Promise<{ blob: Blob; metrics: SpeakMetrics }> {
+  const r = await fetch('/api/voicestudio/speak', post(body))
+  if (!r.ok) throw new Error((await r.json().catch(() => ({ error: r.statusText }))).error)
+  const h = r.headers, num = (k: string) => (h.get(k) ? Number(h.get(k)) : null)
+  return { blob: await r.blob(), metrics: { ttfbMs: num('x-vs-ttfb-ms') ?? 0, totalMs: num('x-vs-total-ms') ?? 0, audioMs: num('x-vs-audio-ms') ?? 0, ttfaMs: num('x-vs-ttfa-ms'), rtf: num('x-vs-rtf'), engine: h.get('x-vs-engine') ?? '', transport: h.get('x-vs-transport') ?? '' } }
 }
 
 /** Stream the A/B benchmark (NDJSON) and call `onRow` for every line as it arrives. */

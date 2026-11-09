@@ -34,6 +34,8 @@ export function ConfigPanel({ cfg, onChange, providers, personas, live }: { cfg:
   const presets: { id: string; label: string; need: () => string | null; apply: (c: SessionConfig) => void }[] = [
     { id: 'local', label: 'Local stack', need: () => (ok('whisper-local', P?.stt) && ok('ollama', P?.llm) && ok('piper', P?.tts) ? null : 'needs Whisper + Ollama + Piper'),
       apply: (c) => { c.stt = { provider: 'whisper-local', model: 'base.en', language: 'en' }; c.llm.provider = 'ollama'; c.llm.model = P?.llm.find((p) => p.id === 'ollama')?.default ?? ''; c.tts.provider = 'piper'; c.tts.voice_id = P?.tts.find((p) => p.id === 'piper')?.default ?? '' } },
+    { id: 'studio', label: 'VoiceStudio', need: () => (ok('voicestudio', P?.stt) && ok('voicestudio', P?.tts) && (ok('ollama', P?.llm) || ok('openai', P?.llm)) ? null : 'needs VoiceStudio running (make studio-up) + an LLM'),
+      apply: (c) => { c.stt = { provider: 'voicestudio', model: '', language: 'en' }; if (ok('ollama', P?.llm)) { c.llm.provider = 'ollama'; c.llm.model = P?.llm.find((p) => p.id === 'ollama')?.default ?? '' } c.tts.provider = 'voicestudio'; c.tts.voice_id = ''; c.tts.model = P?.tts.find((p) => p.id === 'voicestudio')?.models?.[0] ?? '' } },
     { id: 'sim', label: 'Simulated', need: () => null,
       apply: (c) => { c.stt = { provider: 'mock', model: '', language: 'en' }; c.llm.provider = 'mock'; c.llm.model = ''; c.tts.provider = 'mock'; c.tts.voice_id = 'a' } },
     { id: 'fast', label: 'Fast cloud', need: () => (ok('deepgram', P?.stt) && ok('groq', P?.llm) && ok('elevenlabs', P?.tts) ? null : 'needs Deepgram + Groq + ElevenLabs keys'),
@@ -140,9 +142,18 @@ export function ConfigPanel({ cfg, onChange, providers, personas, live }: { cfg:
           </Section>
 
           <Section title="Text-to-speech" lesson={4} badge={ttsP && <Badge tone={ttsP.streaming ? 'good' : 'warn'}>{ttsP.streaming ? 'streaming' : 'renders whole sentence'}</Badge>}>
-            <Field label="Provider"><Select value={cfg.tts.provider} onChange={(v) => upd((c) => { c.tts.provider = v; c.tts.voice_id = P?.tts.find((p) => p.id === v)?.default ?? '' })} options={opts(P?.tts ?? [])} /></Field>
+            <Field label="Provider"><Select value={cfg.tts.provider} onChange={(v) => upd((c) => { c.tts.provider = v; c.tts.voice_id = P?.tts.find((p) => p.id === v)?.default ?? ''; c.tts.model = v === 'voicestudio' ? (P?.tts.find((p) => p.id === v)?.models?.[0] ?? '') : ''; c.tts.instruct = ''; c.tts.language = '' })} options={opts(P?.tts ?? [])} /></Field>
             {ttsP?.note && <p className="text-[11px] text-warn">{ttsP.note}</p>}
             {!!ttsP?.voices?.length && <Field label="voice_id" hint="Swapping the voice_id switches the agent's persona instantly (Lesson 4: ElevenLabs 'Roger')."><Select value={cfg.tts.voice_id || ttsP.default || ''} onChange={(v) => upd((c) => { c.tts.voice_id = v })} options={ttsP.voices.map((v) => ({ value: v.id, label: v.label }))} /></Field>}
+            {cfg.tts.provider === 'voicestudio' && (
+              <>
+                {!!ttsP?.models?.length && <Field label="Engine" hint="Which VoiceStudio TTS engine renders the voice (omnivoice = cloning in 600+ languages, kittentts = tiny English, mlx-audio = Apple-Silicon engines)."><Select value={cfg.tts.model || ttsP.models[0]} onChange={(v) => upd((c) => { c.tts.model = v })} options={ttsP.models.map((m) => ({ value: m, label: m }))} /></Field>}
+                <Field label="Voice style" hint="Describe the voice or delivery in words, e.g. “warm, calm, slight British accent”. Passed to the engine as an instruction (engines that support voice design).">
+                  <input value={cfg.tts.instruct ?? ''} onChange={(e) => upd((c) => { c.tts.instruct = e.target.value })} placeholder="optional style / voice description" className="w-full rounded-lg border border-line-strong bg-inset px-2.5 py-1.5 text-xs outline-none focus:border-accent" />
+                </Field>
+                <Field label="Language" hint="ISO code (en, de, fa…). Empty = let the engine detect it from the text."><input value={cfg.tts.language ?? ''} onChange={(e) => upd((c) => { c.tts.language = e.target.value })} placeholder="auto" className="w-24 rounded-lg border border-line-strong bg-inset px-2.5 py-1.5 text-xs outline-none focus:border-accent" /></Field>
+              </>
+            )}
             <Field label="Speaking rate" value={`${cfg.tts.speed.toFixed(2)}×`}><Slider value={cfg.tts.speed} min={0.7} max={1.4} step={0.05} onChange={(v) => upd((c) => { c.tts.speed = v })} /></Field>
             <Field label="Sentence chunking" hint="When to hand text to TTS. 'eager' flushes the first clause as soon as it exists – lower TTFB, choppier prosody.">
               <Segmented size="sm" value={cfg.tts.chunking.strategy} onChange={(v) => upd((c) => { c.tts.chunking.strategy = v })} options={[{ value: 'sentence', label: 'full sentence' }, { value: 'eager', label: 'eager first clause' }]} />

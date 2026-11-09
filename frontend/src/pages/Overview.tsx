@@ -57,6 +57,7 @@ export default function Overview() {
               {[
                 ['VAD', 'Silero (ONNX)', ok(providers.vad, 'silero')], ['STT', 'faster-whisper (local)', ok(providers.stt, 'whisper-local')], ['LLM', 'Ollama (local)', ok(providers.llm, 'ollama')],
                 ['TTS', 'Piper (local neural)', ok(providers.tts, 'piper')], ['TTS (slow baseline)', 'macOS say', ok(providers.tts, 'macos-say')],
+                ['VoiceStudio', providers.voicestudio?.reachable ? `running · ${providers.voicestudio.device ?? ''} · ${providers.voicestudio.voices} voices` : 'not running (make studio-up)', !!providers.voicestudio?.reachable],
               ].map(([k, v, a]) => <Row key={k as string} k={k as string} v={v as string} on={a as boolean} />)}
               <li className="pt-1.5 text-[11px] uppercase tracking-wide text-fg3">Optional — add keys to .env</li>
               {[['OpenAI (STT · LLM · TTS · Realtime)', providers.keys.openai], ['Groq / Cerebras / Together (fast LLM inference)', providers.keys.groq || providers.keys.cerebras || providers.keys.together],
