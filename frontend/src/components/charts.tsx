@@ -179,17 +179,17 @@ export function Waterfall({ m }: { m: TurnMetrics }) {
   const rows = ROW_ORDER.filter((r) => spans.some((s) => s.stage === r))
   const L = 108, R = 10, rowH = 24, top = 22
   const lat = m.response_latency_ms ?? 0
-  const tMin = Math.min(0, ...spans.map((s) => s.start)) - 40
+  const tMin = Math.max(-900, Math.min(0, ...spans.map((s) => s.start))) - 40 // long speech bars are clipped on the left
   const tMax = Math.max(lat + 700, ...spans.filter((s) => s.stage !== 'playout').map((s) => s.end)) + 60
   const x = (t: number) => L + ((t - tMin) / (tMax - tMin)) * (w - L - R)
   const H = top + rows.length * rowH + 22
   const ticks = useMemo(() => {
     const span = tMax - tMin
-    const step = [100, 200, 250, 500, 1000, 2000].find((s) => span / s <= 9) ?? 2000
+    const step = [100, 200, 250, 500, 1000, 2000].find((s) => span / s <= Math.max(4, Math.floor((w - 118) / 64))) ?? 2000
     const out: number[] = []
     for (let t = Math.ceil(tMin / step) * step; t <= tMax; t += step) out.push(t)
     return out
-  }, [tMin, tMax])
+  }, [tMin, tMax, w])
   return (
     <div ref={ref} className="relative w-full">
       <svg width={w} height={H} role="img" aria-label="Latency waterfall for the last turn" onMouseLeave={() => setTip(null)}>
@@ -199,11 +199,11 @@ export function Waterfall({ m }: { m: TurnMetrics }) {
             <text x={x(t)} y={H - 4} textAnchor="middle" fontSize={10} fill="var(--fg3)" className="num">{t === 0 ? '0' : t}</text>
           </g>
         ))}
-        {[{ v: HUMAN.mean, l: 'human 236' }, { v: HUMAN.floor, l: '540' }, { v: HUMAN.typical, l: '1500' }].map((r) => r.v < tMax && (
+        {[{ v: HUMAN.mean, l: 'human 236' }, { v: HUMAN.floor, l: '540' }, { v: HUMAN.typical, l: '1500' }].map((r) => r.v < tMax && Math.abs(x(r.v) - x(0)) > 30 && (
           <g key={r.v}><line x1={x(r.v)} x2={x(r.v)} y1={top - 4} y2={H - 16} stroke="var(--fg3)" strokeDasharray="2 4" opacity={0.6} /><text x={x(r.v) + 3} y={10} fontSize={9} fill="var(--fg3)">{r.l}</text></g>
         ))}
         <line x1={x(0)} x2={x(0)} y1={top - 6} y2={H - 16} stroke="var(--fg2)" strokeWidth={1.5} />
-        <text x={x(0) + 3} y={top - 9} fontSize={9} fill="var(--fg2)" fontWeight={600}>user stops</text>
+        <text x={x(0) - 4} y={top - 9} textAnchor="end" fontSize={9} fill="var(--fg2)" fontWeight={600}>user stops</text>
         {lat > 0 && <><line x1={x(lat)} x2={x(lat)} y1={top - 6} y2={H - 16} stroke="var(--c-play)" strokeWidth={1.5} /><text x={x(lat) + 3} y={top + rows.length * rowH + 8} fontSize={10} fill="var(--c-play)" fontWeight={600}>agent speaks · {Math.round(lat)} ms</text></>}
         {rows.map((r, i) => {
           const y = top + i * rowH
@@ -212,13 +212,15 @@ export function Waterfall({ m }: { m: TurnMetrics }) {
             <g key={r}>
               <text x={L - 8} y={y + 14} textAnchor="end" fontSize={11} fill="var(--fg2)">{meta.label}</text>
               {spans.filter((s) => s.stage === r).map((s, k) => {
-                const x0 = x(s.start), x1 = Math.min(x(s.end), w - R)
+                const x0 = x(Math.max(s.start, tMin)), x1 = Math.min(x(s.end), w - R)
                 const clipped = x(s.end) > w - R
+                const clippedL = s.start < tMin
                 const dur = s.end - s.start
                 return (
                   <g key={k} onMouseMove={(e) => { const b = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect(); setTip({ x: e.clientX - b.left, y: e.clientY - b.top, text: `${meta.label}${s.label ? ' · ' + s.label : ''}: ${Math.round(s.start)} → ${Math.round(s.end)} ms (${Math.round(dur)} ms)` }) }}>
                     <rect x={x0} y={y + 3} width={Math.max(2, x1 - x0)} height={14} rx={3} fill={meta.color} opacity={r === 'playout' || r === 'user_speech' ? 0.55 : 1} />
                     {clipped && <text x={w - R - 2} y={y + 14} textAnchor="end" fontSize={10} fill="#fff">→</text>}
+                    {clippedL && <text x={x0 + 4} y={y + 14} fontSize={10} fill="#fff">←</text>}
                     {x1 - x0 > 34 && !clipped && <text x={(x0 + x1) / 2} y={y + 14} textAnchor="middle" fontSize={9.5} fontWeight={600} fill="#fff" style={{ pointerEvents: 'none' }}>{Math.round(dur)}</text>}
                     {x1 - x0 <= 34 && <text x={x1 + 4} y={y + 14} fontSize={9.5} fill="var(--fg2)" style={{ pointerEvents: 'none' }}>{Math.round(dur)}</text>}
                   </g>

@@ -14,7 +14,7 @@ export default function LiveKitPage() {
   return (
     <div className="mx-auto max-w-[1280px] space-y-4">
       <PageHeader title="LiveKit · the production path" lessons={<><LessonTag n={1} /><LessonTag n={3} /><LessonTag n={4} /><LessonTag n={5} /></>}>
-        The Live Agent page runs my own inspectable pipeline over a WebSocket. This page is the real thing from the course: a browser connected by <b>WebRTC</b> to a <b>LiveKit</b> server, with a stateful
+        The Live Agent page runs VoiceLab’s own inspectable pipeline over a WebSocket. This page is the real thing from the course: a browser connected by <b>WebRTC</b> to a <b>LiveKit</b> server, with a stateful
         <b> LiveKit Agents</b> worker joining each room. Same ideas, production plumbing — and the agent streams its metrics back over an <b>RTCDataChannel</b>.
       </PageHeader>
       <Architecture />
@@ -204,6 +204,11 @@ function CodeViewer() {
   const [err, setErr] = useState('')
   useEffect(() => { api.source('livekit_agent').then((r) => setText(r.text)).catch((e) => setErr(String(e.message))) }, [])
   const lines = useMemo(() => text.split('\n'), [text])
+  // lines inside triple-quoted docstrings are prose, not code: don't keyword-highlight them
+  const inDoc = useMemo(() => {
+    let open = false
+    return lines.map((l) => { const n = (l.match(/"""/g) ?? []).length; const was = open; if (n % 2 === 1) open = !open; return was || n > 0 })
+  }, [lines])
   const anchors = useMemo(() => STEPS.map((s) => ({ ...s, line: lines.findIndex((l) => /^#\s+Step/.test(l) && s.match.test(l)) })), [lines])
   const jump = (line: number) => document.getElementById(`ln-${line}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   return (
@@ -219,7 +224,7 @@ function CodeViewer() {
         </div>
         <div className="max-h-[560px] overflow-auto bg-inset/50 p-3 font-mono text-[11.5px] leading-[1.55]">
           {err && <div className="text-bad">{err}</div>}
-          {lines.map((l, i) => <div key={i} id={`ln-${i}`} className="flex whitespace-pre"><span className="mr-3 w-7 shrink-0 select-none text-right text-fg3/60">{i + 1}</span><span><Code line={l} /></span></div>)}
+          {lines.map((l, i) => <div key={i} id={`ln-${i}`} className="flex whitespace-pre"><span className="mr-3 w-7 shrink-0 select-none text-right text-fg3/60">{i + 1}</span><span>{inDoc[i] ? <span className="text-fg3">{l}</span> : <Code line={l} />}</span></div>)}
         </div>
       </div>
     </Card>

@@ -35,7 +35,7 @@ export function Card({ title, icon, right, children, className, pad = true, sub 
         <header className="flex items-center gap-2 border-b border-line px-4 py-2.5">
           {icon && <span className="text-fg3">{icon}</span>}
           <h3 className="text-[13px] font-semibold tracking-tight">{title}</h3>
-          {sub && <span className="text-xs text-fg3">{sub}</span>}
+          {sub && <span className="whitespace-nowrap text-xs text-fg3">{sub}</span>}
           <div className="ml-auto flex items-center gap-2">{right}</div>
         </header>
       )}

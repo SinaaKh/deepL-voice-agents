@@ -107,7 +107,7 @@ export default function LiveAgent() {
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_400px]">
         <div className="min-w-0 space-y-4">
         {arch === 'pipeline' && (
-          <Card title="Voice activity & turn taking" sub="last 15 s" right={savedPct != null && live ? <Badge tone="good" title="Audio frames VAD kept away from STT – no transcription cost, no silence hallucinations (Lesson 4)">VAD gate: {savedPct}% of audio not sent to STT</Badge> : undefined}>
+          <Card title="Voice activity & turn taking" sub="last 15 s" right={savedPct != null && live ? <Badge tone="good" title="Audio frames VAD kept away from STT – no transcription cost, no silence hallucinations (Lesson 4)">VAD gate · {savedPct}% not sent to STT</Badge> : undefined}>
             <VadTrace threshold={cfg.vad.threshold} />
             <div className="mt-2"><TurnTimerBar /></div>
           </Card>
@@ -156,7 +156,7 @@ export default function LiveAgent() {
           </Card>
         )}
         {tab === 'waterfall' && (
-          <Card title="Streaming waterfall" sub="t = 0 when the user stops talking" right={<LessonTag n={5}>blocking vs streaming</LessonTag>}>
+          <Card title="Streaming waterfall" sub="t = 0: user stops talking" right={<LessonTag n={5} />}>
             {sel && sel.spans.length ? <Waterfall m={sel} /> : <div className="py-8 text-center text-xs text-fg3">Run a turn to see which stages overlap.</div>}
             <p className="mt-2 text-[11px] leading-snug text-fg3">STT runs <i>during</i> speech; the LLM streams tokens while TTS is already synthesising; playout starts at the first audio byte. The only unavoidable serial wait is <b>endpointing → TTFT → TTFB</b>.</p>
             <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">{(['endpointing', 'stt', 'llm_ttft', 'tool', 'tts_ttfb', 'playout'] as const).map((k) => <span key={k} className="inline-flex items-center gap-1.5 text-[11px] text-fg2"><i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: STAGE[k].color }} />{STAGE[k].label}</span>)}</div>

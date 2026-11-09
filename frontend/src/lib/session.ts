@@ -219,7 +219,11 @@ class SessionStore {
         break
       case 'agent_state':
         this.set({ agentState: ev.state })
-        if (ev.state === 'idle') this.stage('play', { active: false })
+        if (ev.state === 'idle') {
+          this.stage('play', { active: false })
+          // a finished response is final – greetings never get a metrics event, so don't leave their cursor blinking
+          if (this.agentKey && this.state.conv.some((c) => c.key === this.agentKey && !c.final)) this.upsert(this.agentKey, 'agent', 0, (c) => { c.final = true })
+        }
         break
       case 'vad.speech_start': vadRing.markers.push({ t: ev.t, kind: 'speech_start' }); break
       case 'vad.speech_end': vadRing.markers.push({ t: ev.t, kind: 'speech_end' }); break

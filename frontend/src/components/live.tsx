@@ -14,9 +14,9 @@ const NODES: { id: StageId; title: string; role: string; icon: typeof Mic; color
   { id: 'stt', title: 'STT', role: 'streaming', icon: Captions, color: STAGE.stt.color },
   { id: 'turn', title: 'Turn', role: 'gatekeeper', icon: Timer, color: STAGE.turn.color },
   { id: 'llm', title: 'LLM', role: 'token stream', icon: Brain, color: STAGE.llm.color },
-  { id: 'chunk', title: 'Chunker', role: 'tokens→sentences', icon: Scissors, color: STAGE.chunk.color },
+  { id: 'chunk', title: 'Chunk', role: 'sentences', icon: Scissors, color: STAGE.chunk.color },
   { id: 'tts', title: 'TTS', role: 'byte stream', icon: Volume2, color: STAGE.tts.color },
-  { id: 'play', title: 'Playout', role: 'client speaker', icon: Headphones, color: STAGE.play.color },
+  { id: 'play', title: 'Play', role: 'client speaker', icon: Headphones, color: STAGE.play.color },
 ]
 
 export function PipelineDiagram({ sub }: { sub: Partial<Record<StageId, string>> }) {
@@ -56,9 +56,9 @@ function Node({ icon: Icon, title, role, color, active, value, sub, small }: { i
   return (
     <div className={cx('relative rounded-xl border bg-surface p-2.5 transition-all', small ? 'w-[74px] shrink-0' : 'min-w-0 flex-1', active ? 'pulse border-transparent' : 'border-line')}
       style={{ ['--ring' as string]: color, boxShadow: active ? `0 0 0 2px ${color}` : undefined }}>
-      <div className="flex items-center gap-1.5">
-        <span className="flex h-6 w-6 items-center justify-center rounded-md" style={{ background: `color-mix(in srgb, ${color} ${active ? 30 : 16}%, transparent)`, color }}><Icon size={14} /></span>
-        <span className="truncate text-xs font-semibold leading-tight">{title}</span>
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" style={{ background: `color-mix(in srgb, ${color} ${active ? 30 : 16}%, transparent)`, color }}><Icon size={14} /></span>
+        <span className="text-xs font-semibold leading-tight">{title}</span>
       </div>
       <div className="mt-1 text-[10px] leading-tight text-fg3">{role}</div>
       {sub && <div className="mt-0.5 truncate text-[10px] text-fg2" title={sub}>{sub}</div>}
@@ -93,9 +93,9 @@ export function MetricsPanel({ m }: { m?: TurnMetrics }) {
       <div className="grid grid-cols-2 gap-2">
         <Family name="LLMMetrics" color="var(--c-llm)" title={m.llm.model}>
           <Stat label="ttft" value={m.llm.ttft_ms != null ? Math.round(m.llm.ttft_ms) : '—'} unit="ms" tone={ttftTone} />
-          <Stat label="tokens / s" value={m.llm.tokens_per_second ? Math.round(m.llm.tokens_per_second) : '—'} />
+          <Stat label="tok / s" value={m.llm.tokens_per_second ? Math.round(m.llm.tokens_per_second) : '—'} />
           <Stat label="prompt" value={m.llm.prompt_tokens || '—'} />
-          <Stat label="completion" value={m.llm.completion_tokens || '—'} sub={m.llm.estimated_usage ? 'estimated' : undefined} />
+          <Stat label="output" value={m.llm.completion_tokens || '—'} sub={m.llm.estimated_usage ? 'estimated' : undefined} />
         </Family>
         <Family name="STTMetrics" color="var(--c-stt)" title={m.stt.provider}>
           <Stat label="duration" value={m.stt.audio_ms != null ? (m.stt.audio_ms / 1000).toFixed(1) : '—'} unit="s" />
@@ -104,13 +104,13 @@ export function MetricsPanel({ m }: { m?: TurnMetrics }) {
         </Family>
         <Family name="EOUMetrics" color="var(--c-endpoint)" title={`${m.eou.mode}${m.eou.extended ? ' · extended' : ''}`}>
           <Stat label="eou delay" value={m.eou.end_of_utterance_delay_ms != null ? Math.round(m.eou.end_of_utterance_delay_ms) : '—'} unit="ms" />
-          <Stat label="transcr. delay" value={m.eou.transcription_delay_ms != null ? Math.round(m.eou.transcription_delay_ms) : '—'} unit="ms" />
-          <Stat label="P(end of turn)" value={m.eou.p_eot != null ? m.eou.p_eot.toFixed(2) : '—'} />
+          <Stat label="stt delay" value={m.eou.transcription_delay_ms != null ? Math.round(m.eou.transcription_delay_ms) : '—'} unit="ms" />
+          <Stat label="P(end)" value={m.eou.p_eot != null ? m.eou.p_eot.toFixed(2) : '—'} />
         </Family>
         <Family name="TTSMetrics" color="var(--c-tts)" title={m.tts.provider}>
           <Stat label="ttfb" value={m.tts.ttfb_ms != null ? Math.round(m.tts.ttfb_ms) : '—'} unit="ms" tone={ttfbTone} />
           <Stat label="audio" value={m.tts.audio_ms != null ? (m.tts.audio_ms / 1000).toFixed(1) : '—'} unit="s" />
-          <Stat label="render time" value={m.tts.render_ms != null ? Math.round(m.tts.render_ms) : '—'} unit="ms" />
+          <Stat label="render" value={m.tts.render_ms != null ? Math.round(m.tts.render_ms) : '—'} unit="ms" />
           <Stat label="streamed" value={m.tts.streamed == null ? '—' : m.tts.streamed ? 'true' : 'false'} tone={m.tts.streamed ? 'good' : m.tts.streamed === false ? 'warn' : undefined} />
         </Family>
       </div>
